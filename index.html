@@ -64,6 +64,8 @@
     <button class="tbtn wide" id="t-preset">Preset: Quỹ đạo gần</button>
   </div>
 
+  <button id="ui-panel-toggle" aria-pressed="true">Ẩn bảng điều khiển</button>
+
   <div id="pick-popup" aria-live="polite"></div>
 
   <div id="hint">
@@ -87,7 +89,10 @@
     renderer.toneMappingExposure = 1.2;
     renderer.xr.enabled = true;
     document.body.prepend(renderer.domElement);
-    document.body.appendChild(VRButton.createButton(renderer, { optionalFeatures: ['local-floor'] }));
+    document.body.appendChild(VRButton.createButton(renderer, {
+      optionalFeatures: ['local-floor', 'dom-overlay'],
+      domOverlay: { root: document.body },
+    }));
 
     /* ─────────────────────────────────────────
        SCENE / CAMERA
@@ -777,7 +782,7 @@
     /* ─────────────────────────────────────────
        FEATURE TOGGLES
     ───────────────────────────────────────── */
-    const state = { clouds:true, atm:true, night:true, planets:true, aurora:false, iss:true, stars:true, grid:true, layers:false, auto:false, paused:false, realtime:false };
+    const state = { clouds:true, atm:true, night:true, planets:true, aurora:false, iss:true, stars:true, grid:true, layers:false, auto:false, paused:false, realtime:false, uiPanel:true };
 
     const speedLevels = [0.25, 0.5, 1, 1.5, 2, 3];
     let speedIndex = 2;
@@ -968,19 +973,57 @@
     });
     refreshPresetLabel();
 
+    const togglesPanel = document.getElementById('toggles');
+    const panelToggleBtn = document.getElementById('ui-panel-toggle');
+
+    function setUiPanelVisible(visible) {
+      state.uiPanel = visible;
+      if (togglesPanel) togglesPanel.classList.toggle('is-hidden', !visible);
+      if (panelToggleBtn) {
+        panelToggleBtn.textContent = visible ? 'Ẩn bảng điều khiển' : 'Hiện bảng điều khiển';
+        panelToggleBtn.setAttribute('aria-pressed', visible ? 'true' : 'false');
+      }
+    }
+
+    panelToggleBtn?.addEventListener('click', () => {
+      setUiPanelVisible(!state.uiPanel);
+    });
+
+    window.addEventListener('keydown', (ev) => {
+      if (ev.key.toLowerCase() === 'h') {
+        setUiPanelVisible(!state.uiPanel);
+      }
+    });
+
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     const pickLocal = new THREE.Vector3();
 
-    renderer.domElement.addEventListener('click', (ev) => {
-      if (renderer.xr.isPresenting) return;
+    const vrCenter = new THREE.Vector2(0, 0);
+    const vrGazeState = {
+      currentObject: null,
+      dwellTime: 0,
+      dwellThreshold: 1.15,
+      cooldown: 0,
+    };
 
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
-      raycaster.setFromCamera(pointer, camera);
+    const vrReticle = new THREE.Group();
+    const vrReticleRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.008, 0.012, 36),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 })
+    );
+    const vrReticleFill = new THREE.Mesh(
+      new THREE.RingGeometry(0.002, 0.006, 36),
+      new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.0 })
+    );
+    vrReticle.add(vrReticleRing);
+    vrReticle.add(vrReticleFill);
+    vrReticle.position.set(0, 0, -1.3);
+    vrReticle.visible = false;
+    camera.add(vrReticle);
+    scene.add(camera);
 
-      const hits = raycaster.intersectObjects(clickableBodies.filter(isRenderable), false);
+    function applyPickedObjectFromHits(hits, clientX, clientY) {
       if (!hits.length) {
         hideInfoPopup();
         return;
@@ -991,9 +1034,10 @@
         const nonEarthHit = hits.find((h) => h.object !== earth);
         if (nonEarthHit) pickedObj = nonEarthHit.object;
       }
+      const pickedHit = hits.find((h) => h.object === pickedObj) || hits[0];
 
       if (pickedObj === earth) {
-        pickLocal.copy(earth.worldToLocal(hits[0].point.clone()));
+        pickLocal.copy(earth.worldToLocal(pickedHit.point.clone()));
         const rr = pickLocal.length();
         const lat = THREE.MathUtils.radToDeg(Math.asin(pickLocal.y / rr));
         const lon = normalizeLon(THREE.MathUtils.radToDeg(Math.atan2(-pickLocal.z, pickLocal.x)));
@@ -1003,8 +1047,8 @@
         const localMs = utcMs + tzHours * 3600 * 1000;
         const localTime = new Date(localMs).toUTCString().slice(17, 25);
         showInfoPopup(
-          ev.clientX,
-          ev.clientY,
+          clientX,
+          clientY,
           'Điểm trên Trái Đất',
           [
             `Quốc gia: ${countryName}`,
@@ -1016,8 +1060,8 @@
       } else if (pickedObj.userData?.earthLayer) {
         const layer = pickedObj.userData.earthLayer;
         showInfoPopup(
-          ev.clientX,
-          ev.clientY,
+          clientX,
+          clientY,
           layer.name,
           layer.details
         );
@@ -1039,6 +1083,18 @@
 
       refreshFocusLabel();
       snapCameraToFocus();
+    }
+
+    renderer.domElement.addEventListener('click', (ev) => {
+      if (renderer.xr.isPresenting) return;
+
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+
+      const hits = raycaster.intersectObjects(clickableBodies.filter(isRenderable), false);
+      applyPickedObjectFromHits(hits, ev.clientX, ev.clientY);
     });
     refreshFocusLabel();
 
@@ -1060,6 +1116,39 @@
       const dt = clock.getDelta();
       const t  = clock.elapsedTime;
       const simDt = state.paused ? 0 : dt * speedLevels[speedIndex];
+
+      if (renderer.xr.isPresenting) {
+        vrReticle.visible = true;
+
+        raycaster.setFromCamera(vrCenter, camera);
+        const vrHits = raycaster.intersectObjects(clickableBodies.filter(isRenderable), false);
+        const topHit = vrHits[0] || null;
+        const topObj = topHit?.object || null;
+
+        if (topObj && topObj === vrGazeState.currentObject) {
+          vrGazeState.dwellTime += dt;
+        } else {
+          vrGazeState.currentObject = topObj;
+          vrGazeState.dwellTime = 0;
+        }
+
+        if (vrGazeState.cooldown > 0) vrGazeState.cooldown -= dt;
+
+        const progress = THREE.MathUtils.clamp(vrGazeState.dwellTime / vrGazeState.dwellThreshold, 0, 1);
+        vrReticleFill.material.opacity = topObj ? (0.15 + progress * 0.75) : 0.0;
+        vrReticleRing.material.color.set(topObj ? 0x00e5ff : 0xffffff);
+
+        if (topObj && progress >= 1 && vrGazeState.cooldown <= 0) {
+          applyPickedObjectFromHits(vrHits, innerWidth * 0.5, innerHeight * 0.5);
+          vrGazeState.dwellTime = 0;
+          vrGazeState.cooldown = 0.45;
+        }
+      } else {
+        vrReticle.visible = false;
+        vrGazeState.currentObject = null;
+        vrGazeState.dwellTime = 0;
+        vrGazeState.cooldown = 0;
+      }
 
       // Earth self-rotation
       if (state.realtime) {

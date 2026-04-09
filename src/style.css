@@ -123,6 +123,15 @@ canvas { display: block; }
 	background: var(--panel);
 	border: 1px solid var(--border);
 	backdrop-filter: blur(10px);
+	opacity: 1;
+	transform: translateX(0);
+	transition: opacity 0.2s ease, transform 0.2s ease;
+}
+#toggles.is-hidden {
+	opacity: 0;
+	pointer-events: none;
+	transform: translateX(-16px);
+	transition: opacity 0.2s ease, transform 0.2s ease;
 }
 .tbtn {
 	font-family: 'Share Tech Mono', monospace;
@@ -141,11 +150,37 @@ canvas { display: block; }
 .tbtn.on { border-color: var(--cyan); color: var(--cyan); background: rgba(0,229,255,0.07); }
 .tbtn.wide { grid-column: span 2; }
 
+#ui-panel-toggle {
+	position: fixed;
+	top: 76px;
+	left: 20px;
+	z-index: 51;
+	font-family: 'Share Tech Mono', monospace;
+	font-size: 9px;
+	letter-spacing: 1.5px;
+	text-transform: uppercase;
+	padding: 7px 11px;
+	background: var(--panel);
+	border: 1px solid var(--border);
+	color: var(--cyan);
+	cursor: pointer;
+	backdrop-filter: blur(6px);
+	transition: all 0.18s;
+}
+#ui-panel-toggle:hover {
+	border-color: rgba(74,158,255,0.6);
+	color: var(--white);
+}
+
 @media (max-width: 1100px) {
 	#toggles {
 		top: 108px;
 		left: 12px;
 		width: 250px;
+	}
+	#ui-panel-toggle {
+		top: 72px;
+		left: 12px;
 	}
 }
 
@@ -158,6 +193,10 @@ canvas { display: block; }
 		max-height: calc(100vh - 120px);
 	}
 	.tbtn.wide { grid-column: span 1; }
+	#ui-panel-toggle {
+		top: 64px;
+		left: 10px;
+	}
 }
 
 /* VR button override */
