@@ -51,11 +51,15 @@
     <button class="tbtn on" id="t-clouds">Mây</button>
     <button class="tbtn on" id="t-atm">Khí quyển</button>
     <button class="tbtn on" id="t-night">Đêm</button>
-    <button class="tbtn on" id="t-planets">Hành tinh khác</button>
+    <button class="tbtn" id="t-planets">Hành tinh khác</button>
     <button class="tbtn" id="t-aurora">Aurora</button>
+    <button class="tbtn" id="t-natural">Hiện tượng TN</button>
     <button class="tbtn on" id="t-iss">ISS</button>
     <button class="tbtn on" id="t-stars">Sao</button>
     <button class="tbtn on" id="t-grid">Lưới</button>
+    <button class="tbtn" id="t-vr-telemetry">Telemetry VR</button>
+    <button class="tbtn on" id="t-vr-controls">Điều khiển VR</button>
+    <button class="tbtn" id="t-recenter">Recenter VR</button>
     <button class="tbtn wide" id="t-layers">Lớp vỏ Trái Đất</button>
     <button class="tbtn" id="t-auto">Camera tự quay</button>
     <button class="tbtn" id="t-pause">Dừng quay</button>
@@ -220,8 +224,8 @@
       // Vì Mặt Trời tự phát sáng, chúng ta sử dụng BasicMaterial thay vì Phong hay Standard để nó không bị ảnh hưởng bởi bóng tối.
       const sunMaterial = new THREE.MeshBasicMaterial({
         map: texture,
-        // Có thể thêm một màu cơ bản hơi vàng-cam
-        color: 0xffeebb,
+        color: 0xfff7de,
+        toneMapped: false,
       });
 
       sunMesh = new THREE.Mesh(sunGeometry, sunMaterial);
@@ -230,19 +234,61 @@
       scene.add(sunMesh);
       clickableBodies.push(sunMesh);
 
-      // Quầng sáng lớn của Mặt Trời
-      const sunHalo = new THREE.Mesh(
-        new THREE.SphereGeometry(R * 7.5, 64, 64),
+      // Corona layer 1: viền nóng sát bề mặt
+      const sunCoronaA = new THREE.Mesh(
+        new THREE.SphereGeometry(R * 6.05, 64, 64),
         new THREE.MeshBasicMaterial({
-          color: 0xffb347,
+          color: 0xffb45e,
           transparent: true,
-          opacity: 0.16,
+          opacity: 0.09,
           blending: THREE.AdditiveBlending,
           side: THREE.BackSide,
           depthWrite: false,
         })
       );
-      sunMesh.add(sunHalo);
+      sunMesh.add(sunCoronaA);
+
+      // Corona layer 2: viền rộng, mềm hơn
+      const sunCoronaB = new THREE.Mesh(
+        new THREE.SphereGeometry(R * 7.6, 64, 64),
+        new THREE.MeshBasicMaterial({
+          color: 0xffd28a,
+          transparent: true,
+          opacity: 0.06,
+          blending: THREE.AdditiveBlending,
+          side: THREE.BackSide,
+          depthWrite: false,
+        })
+      );
+      sunMesh.add(sunCoronaB);
+
+      // Glow billboard để viền phát sáng giống ảnh quan sát thiên văn
+      const glowCanvas = document.createElement('canvas');
+      glowCanvas.width = 256;
+      glowCanvas.height = 256;
+      const gctx = glowCanvas.getContext('2d');
+      const grad = gctx.createRadialGradient(128, 128, 10, 128, 128, 128);
+      grad.addColorStop(0.0, 'rgba(255,235,170,0.95)');
+      grad.addColorStop(0.35, 'rgba(255,190,100,0.55)');
+      grad.addColorStop(0.75, 'rgba(255,150,70,0.16)');
+      grad.addColorStop(1.0, 'rgba(255,130,40,0.0)');
+      gctx.fillStyle = grad;
+      gctx.fillRect(0, 0, 256, 256);
+
+      const glowTex = new THREE.CanvasTexture(glowCanvas);
+      const sunGlow = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: glowTex,
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.42,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          depthTest: false,
+        })
+      );
+      sunGlow.scale.set(R * 25, R * 25, 1);
+      sunMesh.add(sunGlow);
       onLoad();
     });
 
@@ -254,6 +300,7 @@
 
     const otherPlanetsGroup = new THREE.Group();
     solarSystemGroup.add(otherPlanetsGroup);
+    otherPlanetsGroup.visible = false;
 
     const orbitMaterial = new THREE.LineBasicMaterial({ color: 0xbddcff, transparent: true, opacity: 0.12 });
     const planetNodes = [];
@@ -593,13 +640,14 @@
 
     /* ── Clouds ── */
     const cloudMat = new THREE.MeshPhongMaterial({
-      transparent: true, opacity: 0.36,
+      color: 0xffffff,
+      transparent: true, opacity: 0.62,
       depthWrite: false, blending: THREE.NormalBlending,
     });
-    tl.load(BASE + 'earth_clouds_1024.png', t => {
-      t.colorSpace = THREE.SRGBColorSpace;
+    tl.load(IMG + 'earth_cloud.jpg', t => {
       t.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      cloudMat.map = t; cloudMat.needsUpdate = true;
+      cloudMat.alphaMap = t;
+      cloudMat.needsUpdate = true;
     });
     const clouds = new THREE.Mesh(new THREE.SphereGeometry(R * 1.013, 96, 96), cloudMat);
     clouds.rotation.y = earth.rotation.y;
@@ -782,7 +830,7 @@
     /* ─────────────────────────────────────────
        FEATURE TOGGLES
     ───────────────────────────────────────── */
-    const state = { clouds:true, atm:true, night:true, planets:true, aurora:false, iss:true, stars:true, grid:true, layers:false, auto:false, paused:false, realtime:false, uiPanel:true };
+    const state = { clouds:true, atm:true, night:true, planets:false, aurora:false, natural:false, iss:true, stars:true, grid:true, vrTelemetry:false, vrControls:true, layers:false, auto:false, paused:false, realtime:false, uiPanel:true };
 
     const speedLevels = [0.25, 0.5, 1, 1.5, 2, 3];
     let speedIndex = 2;
@@ -816,6 +864,10 @@
 
     const infoPopup = document.getElementById('pick-popup');
     function showInfoPopup(clientX, clientY, title, lines = []) {
+      if (renderer.xr.isPresenting) {
+        showVrInfoCard(title, lines);
+        return;
+      }
       if (!infoPopup) return;
       infoPopup.innerHTML = `<div class="pick-title">${title}</div>${lines.map((l) => `<div class="pick-row">${l}</div>`).join('')}`;
       infoPopup.style.left = `${clientX + 12}px`;
@@ -823,6 +875,10 @@
       infoPopup.classList.add('show');
     }
     function hideInfoPopup() {
+      if (renderer.xr.isPresenting) {
+        hideVrInfoCard();
+        return;
+      }
       if (!infoPopup) return;
       infoPopup.classList.remove('show');
     }
@@ -874,6 +930,23 @@
       camera.position.copy(focusWorld).add(focusCamDir.multiplyScalar(desiredDist));
     }
 
+    function setSelectedFocus(pickedFocus) {
+      if (!pickedFocus) return false;
+
+      selectedFocus = pickedFocus;
+      followSelected = true;
+      controls.autoRotate = false;
+      if (state.auto) {
+        state.auto = false;
+        const autoBtn = document.getElementById('t-auto');
+        if (autoBtn) autoBtn.classList.remove('on');
+      }
+
+      refreshFocusLabel();
+      snapCameraToFocus();
+      return true;
+    }
+
     function wire(id, key, onChange) {
       const btn = document.getElementById(id);
       btn.addEventListener('click', () => {
@@ -897,9 +970,21 @@
       }
     });
     wire('t-aurora', 'aurora', v => { auroraGroup.visible = v; });
+    wire('t-natural', 'natural', () => {
+      if (!state.natural) {
+        naturalEvent.id = null;
+        naturalEvent.cooldown = 4 + Math.random() * 6;
+        hideInfoPopup();
+      } else {
+        naturalEvent.cooldown = 0;
+        beginNaturalEvent();
+      }
+    });
     wire('t-iss',    'iss',    v => { issGroup.visible = v; });
     wire('t-stars',  'stars',  v => { starGroup.visible = v; });
     wire('t-grid',   'grid',   v => { gridGroup.visible = v; });
+    wire('t-vr-telemetry', 'vrTelemetry', () => {});
+    wire('t-vr-controls', 'vrControls', () => {});
     wire('t-layers', 'layers', v => {
       earthLayerBlend.target = v ? 1 : 0;
       setEarthLayerMode(v);
@@ -958,6 +1043,12 @@
       if (!presetBtn) return;
       presetBtn.textContent = `Preset: ${cameraPresets[presetIndex].name}`;
     }
+    function triggerControlById(id) {
+      const el = document.getElementById(id);
+      if (!el) return false;
+      el.click();
+      return true;
+    }
     function applyCurrentPreset() {
       const p = cameraPresets[presetIndex];
       p.apply();
@@ -989,10 +1080,62 @@
       setUiPanelVisible(!state.uiPanel);
     });
 
+    function recenterVrToEarth() {
+      earth.getWorldPosition(focusWorld);
+      controls.target.copy(focusWorld);
+      camera.position.copy(focusWorld).add(new THREE.Vector3(8, 3.6, 8));
+      camera.lookAt(focusWorld);
+
+      if (!renderer.xr.isPresenting) return;
+
+      const session = renderer.xr.getSession();
+      if (!session?.requestReferenceSpace) return;
+
+      session.requestReferenceSpace('local-floor')
+        .then((baseRefSpace) => {
+          const desiredEarthPos = new THREE.Vector3(0, 1.45, -7.6);
+          const delta = desiredEarthPos.sub(focusWorld);
+          const offsetRefSpace = baseRefSpace.getOffsetReferenceSpace(
+            new XRRigidTransform({ x: delta.x, y: delta.y, z: delta.z })
+          );
+          renderer.xr.setReferenceSpace(offsetRefSpace);
+        })
+        .catch(() => {});
+    }
+
+    document.getElementById('t-recenter')?.addEventListener('click', () => {
+      selectedFocus = focusTargets[0];
+      followSelected = false;
+      refreshFocusLabel();
+      recenterVrToEarth();
+      showInfoPopup(innerWidth * 0.5, innerHeight * 0.5, 'Recenter VR', ['Đã căn lại góc nhìn về Trái Đất']);
+    });
+
     window.addEventListener('keydown', (ev) => {
       if (ev.key.toLowerCase() === 'h') {
         setUiPanelVisible(!state.uiPanel);
       }
+    });
+
+    renderer.xr.addEventListener('sessionstart', () => {
+      if (state.layers) {
+        state.layers = false;
+        const layersBtn = document.getElementById('t-layers');
+        if (layersBtn) layersBtn.classList.remove('on');
+        earthLayerBlend.target = 0;
+        setEarthLayerMode(false);
+      }
+
+      selectedFocus = focusTargets[0];
+      followSelected = false;
+
+      recenterVrToEarth();
+
+      refreshFocusLabel();
+
+      vrGazeState.currentObject = null;
+      vrGazeState.dwellTime = 0;
+      vrGazeState.cooldown = 0;
     });
 
     const raycaster = new THREE.Raycaster();
@@ -1006,6 +1149,54 @@
       dwellThreshold: 1.15,
       cooldown: 0,
     };
+
+    const vrTmpMatrix = new THREE.Matrix4();
+    const vrRayOrigin = new THREE.Vector3();
+    const vrRayDirection = new THREE.Vector3();
+
+    const vrControllers = [0, 1].map((index) => {
+      const controller = renderer.xr.getController(index);
+      const ray = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, 0, 0),
+          new THREE.Vector3(0, 0, -1),
+        ]),
+        new THREE.LineBasicMaterial({
+          color: 0x00e5ff,
+          transparent: true,
+          opacity: 0.92,
+          blending: THREE.AdditiveBlending,
+        })
+      );
+      ray.name = 'controller-ray';
+      ray.scale.z = 8;
+      ray.visible = false;
+      controller.add(ray);
+
+      controller.addEventListener('connected', (event) => {
+        controller.userData.inputSource = event.data;
+        ray.visible = true;
+      });
+      controller.addEventListener('disconnected', () => {
+        controller.userData.inputSource = null;
+        ray.visible = false;
+      });
+
+      scene.add(controller);
+
+      return {
+        controller,
+        ray,
+        hits: [],
+        axisCooldown: 0,
+        prevButtons: {
+          trigger: false,
+          squeeze: false,
+          panel: false,
+          pause: false,
+        },
+      };
+    });
 
     const vrReticle = new THREE.Group();
     const vrReticleRing = new THREE.Mesh(
@@ -1022,6 +1213,101 @@
     vrReticle.visible = false;
     camera.add(vrReticle);
     scene.add(camera);
+
+    function pulseController(inputSource, intensity = 0.35, ms = 40) {
+      const actuator = inputSource?.gamepad?.hapticActuators?.[0];
+      if (!actuator?.pulse) return;
+      actuator.pulse(intensity, ms).catch(() => {});
+    }
+
+    function updateControllerRay(ctrl, dt) {
+      const inputSource = ctrl.controller.userData.inputSource;
+      if (!inputSource || !renderer.xr.isPresenting) {
+        ctrl.ray.visible = false;
+        ctrl.hits = [];
+        return;
+      }
+
+      ctrl.ray.visible = true;
+
+      vrTmpMatrix.identity().extractRotation(ctrl.controller.matrixWorld);
+      vrRayOrigin.setFromMatrixPosition(ctrl.controller.matrixWorld);
+      vrRayDirection.set(0, 0, -1).applyMatrix4(vrTmpMatrix).normalize();
+
+      raycaster.ray.origin.copy(vrRayOrigin);
+      raycaster.ray.direction.copy(vrRayDirection);
+      const rayTargets = clickableBodies.filter(isRenderable);
+      if (state.vrTelemetry && telemetry3DMesh.visible) rayTargets.push(telemetry3DMesh);
+      if (state.vrControls && state.uiPanel && controls3DMesh.visible) rayTargets.push(controls3DMesh);
+      ctrl.hits = raycaster.intersectObjects(rayTargets, false);
+
+      if (ctrl.hits.length) {
+        ctrl.ray.material.color.setHex(0x47ffb3);
+        ctrl.ray.scale.z = Math.min(24, Math.max(0.2, ctrl.hits[0].distance));
+      } else {
+        ctrl.ray.material.color.setHex(0x00e5ff);
+        ctrl.ray.scale.z = 8;
+      }
+
+      const gp = inputSource.gamepad;
+      if (!gp) return;
+
+      const triggerPressed = !!gp.buttons?.[0]?.pressed;
+      const squeezePressed = !!gp.buttons?.[1]?.pressed;
+      const panelPressed = !!gp.buttons?.[4]?.pressed;
+      const pausePressed = !!gp.buttons?.[5]?.pressed;
+
+      if (triggerPressed && !ctrl.prevButtons.trigger && ctrl.hits.length) {
+        const firstHit = ctrl.hits[0];
+        if (firstHit.object === telemetry3DMesh) {
+          const consumed = handleTelemetry3DPointerSelect(firstHit);
+          pulseController(inputSource, consumed ? 0.46 : 0.2, consumed ? 38 : 18);
+        } else if (firstHit.object === controls3DMesh) {
+          const consumed = handleControls3DPointerSelect(firstHit);
+          pulseController(inputSource, consumed ? 0.46 : 0.2, consumed ? 38 : 18);
+        } else {
+          applyPickedObjectFromHits(ctrl.hits, innerWidth * 0.5, innerHeight * 0.5);
+          pulseController(inputSource, 0.5, 40);
+        }
+      }
+
+      if (squeezePressed && !ctrl.prevButtons.squeeze) {
+        setUiPanelVisible(!state.uiPanel);
+        pulseController(inputSource, 0.24, 25);
+      }
+
+      if (panelPressed && !ctrl.prevButtons.panel) {
+        presetIndex = (presetIndex + 1) % cameraPresets.length;
+        refreshPresetLabel();
+        applyCurrentPreset();
+        pulseController(inputSource, 0.28, 25);
+      }
+
+      if (pausePressed && !ctrl.prevButtons.pause) {
+        state.paused = !state.paused;
+        const pauseBtn = document.getElementById('t-pause');
+        if (pauseBtn) pauseBtn.classList.toggle('on', state.paused);
+        controls.autoRotate = state.paused ? false : state.auto;
+        pulseController(inputSource, 0.28, 25);
+      }
+
+      ctrl.axisCooldown = Math.max(0, ctrl.axisCooldown - dt);
+      const axisY = gp.axes?.[3] ?? 0;
+      if (ctrl.axisCooldown <= 0 && Math.abs(axisY) > 0.75) {
+        if (axisY < 0) {
+          speedIndex = (speedIndex + 1) % speedLevels.length;
+        } else {
+          speedIndex = (speedIndex - 1 + speedLevels.length) % speedLevels.length;
+        }
+        refreshSpeedLabel();
+        ctrl.axisCooldown = 0.28;
+      }
+
+      ctrl.prevButtons.trigger = triggerPressed;
+      ctrl.prevButtons.squeeze = squeezePressed;
+      ctrl.prevButtons.panel = panelPressed;
+      ctrl.prevButtons.pause = pausePressed;
+    }
 
     function applyPickedObjectFromHits(hits, clientX, clientY) {
       if (!hits.length) {
@@ -1071,18 +1357,7 @@
 
       const pickedFocus = focusTargets.find((f) => f.get() === pickedObj);
       if (!pickedFocus) return;
-
-      selectedFocus = pickedFocus;
-      followSelected = true;
-      controls.autoRotate = false;
-      if (state.auto) {
-        state.auto = false;
-        const autoBtn = document.getElementById('t-auto');
-        if (autoBtn) autoBtn.classList.remove('on');
-      }
-
-      refreshFocusLabel();
-      snapCameraToFocus();
+      setSelectedFocus(pickedFocus);
     }
 
     renderer.domElement.addEventListener('click', (ev) => {
@@ -1107,6 +1382,456 @@
     const vBody = document.getElementById('v-body');
     const earthWorld = new THREE.Vector3();
 
+    const naturalBase = {
+      cloudOpacity: 0.62,
+      cloudColor: new THREE.Color(0xffffff),
+      atmColor: new THREE.Color(0x4488ff),
+      haloOpacity: 0.1,
+      nightIntensity: 0.46,
+      nightColor: new THREE.Color(0xffcc55),
+    };
+
+    let naturalCloudSpinExtra = 0;
+    let naturalAuroraForce = false;
+    let naturalAtmospherePulse = 0;
+    const naturalEvent = {
+      id: null,
+      elapsed: 0,
+      duration: 0,
+      cooldown: 4 + Math.random() * 6,
+    };
+
+    const naturalEventDefs = [
+      {
+        id: 'storm',
+        title: 'Siêu bão nhiệt đới',
+        desc: 'Mây dày hơn, xoáy mạnh, phản xạ khí quyển tăng.',
+        duration: [7, 11],
+      },
+      {
+        id: 'solarStorm',
+        title: 'Bão từ Mặt Trời',
+        desc: 'Aurora bùng sáng và viền khí quyển chuyển xanh tím.',
+        duration: [6, 10],
+      },
+      {
+        id: 'volcanic',
+        title: 'Hoạt động núi lửa',
+        desc: 'Ánh phát quang ban đêm tăng do bụi/đám mây tro nóng.',
+        duration: [6, 10],
+      },
+    ];
+
+    function resetNaturalVisuals() {
+      naturalCloudSpinExtra = 0;
+      naturalAuroraForce = false;
+      naturalAtmospherePulse = 0;
+
+      cloudMat.opacity = naturalBase.cloudOpacity;
+      cloudMat.color.copy(naturalBase.cloudColor);
+
+      atmMat.uniforms.uColor.value.copy(naturalBase.atmColor);
+      haloMat.opacity = naturalBase.haloOpacity;
+
+      earthMat.emissive.copy(naturalBase.nightColor);
+      earthMat.emissiveIntensity = state.night ? naturalBase.nightIntensity : 0;
+      earthMat.needsUpdate = true;
+
+      auroraGroup.visible = state.aurora;
+    }
+
+    function beginNaturalEvent() {
+      const def = naturalEventDefs[Math.floor(Math.random() * naturalEventDefs.length)];
+      naturalEvent.id = def.id;
+      naturalEvent.elapsed = 0;
+      naturalEvent.duration = THREE.MathUtils.randFloat(def.duration[0], def.duration[1]);
+      showInfoPopup(innerWidth * 0.5, innerHeight * 0.42, `Hiện tượng: ${def.title}`, [def.desc]);
+    }
+
+    function updateNaturalPhenomena(simDt) {
+      resetNaturalVisuals();
+      if (!state.natural) return;
+
+      if (!naturalEvent.id) {
+        naturalEvent.cooldown -= simDt;
+        if (naturalEvent.cooldown <= 0) {
+          beginNaturalEvent();
+        }
+        return;
+      }
+
+      naturalEvent.elapsed += simDt;
+      const p = THREE.MathUtils.clamp(naturalEvent.elapsed / naturalEvent.duration, 0, 1);
+      const k = Math.sin(p * Math.PI);
+
+      switch (naturalEvent.id) {
+        case 'storm':
+          cloudMat.opacity = THREE.MathUtils.lerp(0.62, 0.98, k);
+          cloudMat.color.setRGB(0.84, 0.9, 0.98);
+          atmMat.uniforms.uColor.value.setRGB(0.46, 0.66, 0.98);
+          naturalCloudSpinExtra = 0.22 * k;
+          haloMat.opacity = THREE.MathUtils.lerp(0.1, 0.26, k);
+          break;
+        case 'solarStorm':
+          naturalAuroraForce = true;
+          atmMat.uniforms.uColor.value.setRGB(0.22, 1.0, 0.74);
+          haloMat.opacity = THREE.MathUtils.lerp(0.1, 0.3, k);
+          naturalAtmospherePulse = 0.42 * k;
+          earthMat.emissive.set(0x66ffee);
+          earthMat.emissiveIntensity = state.night ? THREE.MathUtils.lerp(0.46, 0.92, k) : THREE.MathUtils.lerp(0, 0.26, k);
+          break;
+        case 'volcanic':
+          earthMat.emissive.set(0xff5b2e);
+          earthMat.emissiveIntensity = state.night ? THREE.MathUtils.lerp(0.46, 1.35, k) : THREE.MathUtils.lerp(0, 0.52, k);
+          cloudMat.opacity = THREE.MathUtils.lerp(0.62, 0.84, k);
+          cloudMat.color.setRGB(0.88, 0.82, 0.74);
+          atmMat.uniforms.uColor.value.setRGB(0.9, 0.52, 0.3);
+          haloMat.opacity = THREE.MathUtils.lerp(0.1, 0.2, k);
+          break;
+      }
+
+      auroraGroup.visible = state.aurora || naturalAuroraForce;
+
+      if (naturalEvent.elapsed >= naturalEvent.duration) {
+        naturalEvent.id = null;
+        naturalEvent.elapsed = 0;
+        naturalEvent.duration = 0;
+        naturalEvent.cooldown = THREE.MathUtils.randFloat(4, 10);
+      }
+    }
+
+    const vrInfoCanvas = document.createElement('canvas');
+    vrInfoCanvas.width = 700;
+    vrInfoCanvas.height = 360;
+    const vrInfoCtx = vrInfoCanvas.getContext('2d');
+    const vrInfoTex = new THREE.CanvasTexture(vrInfoCanvas);
+    vrInfoTex.colorSpace = THREE.SRGBColorSpace;
+    vrInfoTex.minFilter = THREE.LinearFilter;
+    vrInfoTex.magFilter = THREE.LinearFilter;
+
+    const vrInfoMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.95, 0.49),
+      new THREE.MeshBasicMaterial({ map: vrInfoTex, transparent: true, opacity: 0.98, side: THREE.DoubleSide })
+    );
+    vrInfoMesh.position.set(-0.95, 0.58, -1.9);
+    vrInfoMesh.rotation.y = 0.3;
+    vrInfoMesh.visible = false;
+    camera.add(vrInfoMesh);
+
+    let vrInfoHideAt = 0;
+
+    function drawVrInfoCard(title, lines = []) {
+      if (!vrInfoCtx) return;
+      const ctx = vrInfoCtx;
+      const W = vrInfoCanvas.width;
+      const H = vrInfoCanvas.height;
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = 'rgba(4,14,28,0.9)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.strokeStyle = 'rgba(74,158,255,0.45)';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(8, 8, W - 16, H - 16);
+
+      ctx.fillStyle = '#00e5ff';
+      ctx.font = '700 34px Rajdhani, sans-serif';
+      ctx.fillText(title || 'Thông tin', 24, 50);
+
+      ctx.fillStyle = '#e8f4ff';
+      ctx.font = '600 24px Rajdhani, sans-serif';
+      let y = 96;
+      for (const line of lines.slice(0, 7)) {
+        ctx.fillText(String(line), 24, y);
+        y += 36;
+      }
+
+      ctx.fillStyle = 'rgba(159,220,255,0.85)';
+      ctx.font = '500 18px Rajdhani, sans-serif';
+      ctx.fillText('Popup VR · tự ẩn sau vài giây', 24, H - 20);
+
+      vrInfoTex.needsUpdate = true;
+    }
+
+    function showVrInfoCard(title, lines = []) {
+      drawVrInfoCard(title, lines);
+      vrInfoMesh.visible = true;
+      vrInfoHideAt = performance.now() + 6000;
+    }
+
+    function hideVrInfoCard() {
+      vrInfoMesh.visible = false;
+      vrInfoHideAt = 0;
+    }
+
+    /* ─────────────────────────────────────────
+       VR 3D TELEMETRY PANEL
+    ───────────────────────────────────────── */
+    const telemetry3DCanvas = document.createElement('canvas');
+    telemetry3DCanvas.width = 1024;
+    telemetry3DCanvas.height = 768;
+    const telemetry3DCtx = telemetry3DCanvas.getContext('2d');
+    const telemetry3DTex = new THREE.CanvasTexture(telemetry3DCanvas);
+    telemetry3DTex.colorSpace = THREE.SRGBColorSpace;
+    telemetry3DTex.minFilter = THREE.LinearFilter;
+    telemetry3DTex.magFilter = THREE.LinearFilter;
+
+    const telemetry3DMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.28, 0.96),
+      new THREE.MeshBasicMaterial({ map: telemetry3DTex, transparent: true, opacity: 0.96, side: THREE.DoubleSide })
+    );
+    telemetry3DMesh.position.set(1.18, 0.62, -2.0);
+    telemetry3DMesh.rotation.y = -0.34;
+    telemetry3DMesh.visible = false;
+    camera.add(telemetry3DMesh);
+
+    const telemetry3DPairs = [
+      ['k-radius', 'v-radius'],
+      ['k-mass', 'v-mass'],
+      ['k-tilt', 'v-tilt'],
+      ['k-spin', 'v-spin'],
+      ['k-orbit', 'v-orbit'],
+      [null, null],
+      [null, 'v-dist'],
+      [null, 'v-lon'],
+      [null, 'v-iss'],
+      [null, 'v-body'],
+    ];
+
+    const telemetry3DFocusButtons = [
+      { name: 'Trái Đất', x: 34,  y: 646, w: 236, h: 46 },
+      { name: 'Mặt Trăng', x: 286, y: 646, w: 236, h: 46 },
+      { name: 'Mặt Trời', x: 538, y: 646, w: 216, h: 46 },
+      { name: 'Sao Hỏa', x: 770, y: 646, w: 220, h: 46 },
+      { name: 'Sao Mộc', x: 34,  y: 706, w: 236, h: 46 },
+      { name: 'Sao Thổ', x: 286, y: 706, w: 236, h: 46 },
+      { name: 'Vỏ Trái Đất', x: 538, y: 706, w: 216, h: 46 },
+      { name: 'Nhân Trong', x: 770, y: 706, w: 220, h: 46 },
+    ];
+
+    function handleTelemetry3DPointerSelect(hit) {
+      if (!hit?.uv) return false;
+      const x = hit.uv.x * telemetry3DCanvas.width;
+      const y = (1 - hit.uv.y) * telemetry3DCanvas.height;
+
+      const entry = telemetry3DFocusButtons.find((b) => x >= b.x && x <= (b.x + b.w) && y >= b.y && y <= (b.y + b.h));
+      if (!entry) return false;
+
+      const pickedFocus = focusTargets.find((f) => f.name === entry.name);
+      if (!pickedFocus) return false;
+
+      const ok = setSelectedFocus(pickedFocus);
+      if (ok) drawTelemetry3D();
+      return ok;
+    }
+
+    function drawTelemetry3D() {
+      if (!telemetry3DCtx) return;
+
+      const ctx = telemetry3DCtx;
+      const W = telemetry3DCanvas.width;
+      const H = telemetry3DCanvas.height;
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = 'rgba(4,14,28,0.86)';
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.strokeStyle = 'rgba(74,158,255,0.42)';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(8, 8, W - 16, H - 16);
+
+      ctx.fillStyle = '#00e5ff';
+      ctx.font = '700 36px Rajdhani, sans-serif';
+      ctx.fillText('Telemetry', 34, 62);
+
+      let y = 112;
+      for (const [kId, vId] of telemetry3DPairs) {
+        if (!kId && !vId) {
+          ctx.strokeStyle = 'rgba(74,158,255,0.25)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(28, y);
+          ctx.lineTo(W - 28, y);
+          ctx.stroke();
+          y += 28;
+          continue;
+        }
+
+        const keyText = kId
+          ? (document.getElementById(kId)?.textContent || '')
+          : (vId === 'v-dist' ? 'Độ cao quan sát'
+            : vId === 'v-lon' ? 'Góc kinh tuyến'
+            : vId === 'v-iss' ? 'ISS orbit'
+            : 'Góc nhìn');
+        const valText = document.getElementById(vId)?.textContent || '—';
+
+        ctx.fillStyle = 'rgba(232,244,255,0.72)';
+        ctx.font = '600 24px Rajdhani, sans-serif';
+        ctx.fillText(keyText, 34, y);
+
+        ctx.fillStyle = (vId === 'v-dist' || vId === 'v-lon' || vId === 'v-iss' || vId === 'v-body')
+          ? '#00e5ff'
+          : '#e8f4ff';
+        ctx.font = '600 24px "Share Tech Mono", monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(valText, W - 34, y);
+        ctx.textAlign = 'left';
+
+        y += 58;
+      }
+
+      ctx.strokeStyle = 'rgba(74,158,255,0.25)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(28, 620);
+      ctx.lineTo(W - 28, 620);
+      ctx.stroke();
+
+      ctx.fillStyle = '#8bc4ff';
+      ctx.font = '600 18px Rajdhani, sans-serif';
+      ctx.fillText('Chọn nhanh (Trigger vào ô để focus)', 34, 642);
+
+      const focusedName = activeFocus().name;
+      for (const b of telemetry3DFocusButtons) {
+        const isActive = focusedName === b.name;
+        ctx.fillStyle = isActive ? 'rgba(0,229,255,0.20)' : 'rgba(13,26,49,0.62)';
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.strokeStyle = isActive ? '#00e5ff' : 'rgba(121,165,214,0.62)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(b.x, b.y, b.w, b.h);
+        ctx.fillStyle = isActive ? '#00e5ff' : '#d6ebff';
+        ctx.font = '600 20px Rajdhani, sans-serif';
+        ctx.fillText(b.name, b.x + 12, b.y + 30);
+      }
+
+      telemetry3DTex.needsUpdate = true;
+    }
+
+    let telemetry3DTimer = 0;
+    drawTelemetry3D();
+
+    const controls3DCanvas = document.createElement('canvas');
+    controls3DCanvas.width = 1024;
+    controls3DCanvas.height = 640;
+    const controls3DCtx = controls3DCanvas.getContext('2d');
+    const controls3DTex = new THREE.CanvasTexture(controls3DCanvas);
+    controls3DTex.colorSpace = THREE.SRGBColorSpace;
+    controls3DTex.minFilter = THREE.LinearFilter;
+    controls3DTex.magFilter = THREE.LinearFilter;
+
+    const controls3DMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.28, 0.8),
+      new THREE.MeshBasicMaterial({ map: controls3DTex, transparent: true, opacity: 0.94, side: THREE.DoubleSide })
+    );
+    controls3DMesh.position.set(1.18, -0.38, -2.0);
+    controls3DMesh.rotation.y = -0.34;
+    controls3DMesh.visible = false;
+    camera.add(controls3DMesh);
+
+    const controls3DButtons = [
+      { id: 't-clouds',       label: 'Mây',            x: 34,  y: 154, w: 216, h: 44, stateKey: 'clouds' },
+      { id: 't-atm',          label: 'Khí quyển',      x: 268, y: 154, w: 216, h: 44, stateKey: 'atm' },
+      { id: 't-night',        label: 'Đêm',            x: 502, y: 154, w: 216, h: 44, stateKey: 'night' },
+      { id: 't-grid',         label: 'Lưới',           x: 736, y: 154, w: 252, h: 44, stateKey: 'grid' },
+
+      { id: 't-aurora',       label: 'Aurora',         x: 34,  y: 208, w: 216, h: 44, stateKey: 'aurora' },
+      { id: 't-natural',      label: 'Hiện tượng TN',  x: 268, y: 208, w: 216, h: 44, stateKey: 'natural' },
+      { id: 't-iss',          label: 'ISS',            x: 502, y: 208, w: 216, h: 44, stateKey: 'iss' },
+      { id: 't-stars',        label: 'Sao',            x: 736, y: 208, w: 252, h: 44, stateKey: 'stars' },
+
+      { id: 't-layers',       label: 'Lớp vỏ',         x: 34,  y: 262, w: 216, h: 44, stateKey: 'layers' },
+      { id: 't-pause',        label: 'Pause',          x: 268, y: 262, w: 216, h: 44, stateKey: 'paused' },
+      { id: 't-realtime',     label: 'Realtime',       x: 502, y: 262, w: 216, h: 44, stateKey: 'realtime' },
+      { id: 't-vr-telemetry', label: 'Telemetry VR',   x: 736, y: 262, w: 252, h: 44, stateKey: 'vrTelemetry' },
+
+      { id: 't-vr-controls',  label: 'Điều khiển VR',  x: 34,  y: 316, w: 318, h: 44, stateKey: 'vrControls' },
+      { id: 't-planets',      label: 'Hành tinh khác', x: 370, y: 316, w: 318, h: 44, stateKey: 'planets' },
+      { id: 't-auto',         label: 'Auto camera',    x: 706, y: 316, w: 282, h: 44, stateKey: 'auto' },
+
+      { id: 't-recenter',     label: 'Recenter VR',    x: 34,  y: 370, w: 318, h: 44 },
+      { id: 't-speed',        label: 'Tăng tốc độ',    x: 370, y: 370, w: 318, h: 44 },
+      { id: 't-preset',       label: 'Đổi preset',     x: 706, y: 370, w: 282, h: 44 },
+    ];
+
+    function handleControls3DPointerSelect(hit) {
+      if (!hit?.uv) return false;
+      const x = hit.uv.x * controls3DCanvas.width;
+      const y = (1 - hit.uv.y) * controls3DCanvas.height;
+
+      const btn = controls3DButtons.find((b) => x >= b.x && x <= (b.x + b.w) && y >= b.y && y <= (b.y + b.h));
+      if (!btn) return false;
+
+      const consumed = triggerControlById(btn.id);
+      if (consumed) {
+        drawControls3D();
+      }
+      return consumed;
+    }
+
+    function drawControls3D() {
+      if (!controls3DCtx) return;
+
+      const ctx = controls3DCtx;
+      const W = controls3DCanvas.width;
+      const H = controls3DCanvas.height;
+      const onOff = (v) => (v ? 'BẬT' : 'TẮT');
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = 'rgba(5,16,34,0.84)';
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.strokeStyle = 'rgba(74,158,255,0.42)';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(8, 8, W - 16, H - 16);
+
+      ctx.fillStyle = '#00e5ff';
+      ctx.font = '700 34px Rajdhani, sans-serif';
+      ctx.fillText('VR Controls', 34, 58);
+
+      ctx.fillStyle = '#9fdcff';
+      ctx.font = '600 20px "Share Tech Mono", monospace';
+      ctx.fillText(`Tốc độ: x${speedLevels[speedIndex].toFixed(2).replace(/\.00$/, '.0').replace(/0$/, '')}`, 34, 98);
+      ctx.fillText(`Preset: ${cameraPresets[presetIndex].name}`, 34, 128);
+
+      for (const btn of controls3DButtons) {
+        const isOn = btn.stateKey ? !!state[btn.stateKey] : false;
+        ctx.fillStyle = isOn ? 'rgba(0,229,255,0.20)' : 'rgba(13, 26, 49, 0.65)';
+        ctx.fillRect(btn.x, btn.y, btn.w, btn.h);
+        ctx.strokeStyle = isOn ? '#00e5ff' : 'rgba(121,165,214,0.62)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(btn.x, btn.y, btn.w, btn.h);
+
+        ctx.fillStyle = isOn ? '#00e5ff' : '#d6ebff';
+        ctx.font = '600 20px Rajdhani, sans-serif';
+        ctx.fillText(btn.label, btn.x + 12, btn.y + 28);
+
+        if (btn.stateKey) {
+          ctx.fillStyle = isOn ? '#00e5ff' : 'rgba(214,235,255,0.8)';
+          ctx.font = '600 16px "Share Tech Mono", monospace';
+          ctx.textAlign = 'right';
+          ctx.fillText(onOff(isOn), btn.x + btn.w - 10, btn.y + 28);
+          ctx.textAlign = 'left';
+        }
+      }
+
+      ctx.strokeStyle = 'rgba(74,158,255,0.25)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(28, H - 108);
+      ctx.lineTo(W - 28, H - 108);
+      ctx.stroke();
+
+      ctx.fillStyle = '#8bc4ff';
+      ctx.font = '600 17px Rajdhani, sans-serif';
+      ctx.fillText('Trigger: chọn object hoặc bấm nút trên panel', 34, H - 72);
+      ctx.fillText('Squeeze: ẩn/hiện bảng · A/X: preset · B/Y: pause', 34, H - 46);
+      ctx.fillText('Thumbstick lên/xuống: đổi tốc độ', 34, H - 20);
+
+      controls3DTex.needsUpdate = true;
+    }
+
+    let controls3DTimer = 0;
+    drawControls3D();
+
     /* ─────────────────────────────────────────
        ANIMATION LOOP
     ───────────────────────────────────────── */
@@ -1118,7 +1843,28 @@
       const simDt = state.paused ? 0 : dt * speedLevels[speedIndex];
 
       if (renderer.xr.isPresenting) {
-        vrReticle.visible = true;
+        const hasController = vrControllers.some((c) => !!c.controller.userData.inputSource);
+        vrReticle.visible = !hasController;
+        telemetry3DMesh.visible = state.vrTelemetry;
+        controls3DMesh.visible = state.vrControls && state.uiPanel;
+
+        if (vrInfoHideAt > 0 && performance.now() >= vrInfoHideAt) {
+          hideVrInfoCard();
+        }
+
+        telemetry3DTimer += dt;
+        if (state.vrTelemetry && telemetry3DTimer >= 0.12) {
+          drawTelemetry3D();
+          telemetry3DTimer = 0;
+        }
+
+        controls3DTimer += dt;
+        if (state.vrControls && state.uiPanel && controls3DTimer >= 0.15) {
+          drawControls3D();
+          controls3DTimer = 0;
+        }
+
+        vrControllers.forEach((c) => updateControllerRay(c, dt));
 
         raycaster.setFromCamera(vrCenter, camera);
         const vrHits = raycaster.intersectObjects(clickableBodies.filter(isRenderable), false);
@@ -1135,8 +1881,6 @@
         if (vrGazeState.cooldown > 0) vrGazeState.cooldown -= dt;
 
         const progress = THREE.MathUtils.clamp(vrGazeState.dwellTime / vrGazeState.dwellThreshold, 0, 1);
-        vrReticleFill.material.opacity = topObj ? (0.15 + progress * 0.75) : 0.0;
-        vrReticleRing.material.color.set(topObj ? 0x00e5ff : 0xffffff);
 
         if (topObj && progress >= 1 && vrGazeState.cooldown <= 0) {
           applyPickedObjectFromHits(vrHits, innerWidth * 0.5, innerHeight * 0.5);
@@ -1145,10 +1889,19 @@
         }
       } else {
         vrReticle.visible = false;
+        telemetry3DMesh.visible = false;
+        controls3DMesh.visible = false;
+        hideVrInfoCard();
+        vrControllers.forEach((c) => {
+          c.ray.visible = false;
+          c.hits = [];
+        });
         vrGazeState.currentObject = null;
         vrGazeState.dwellTime = 0;
         vrGazeState.cooldown = 0;
       }
+
+      updateNaturalPhenomena(simDt);
 
       // Earth self-rotation
       if (state.realtime) {
@@ -1158,6 +1911,7 @@
         earth.rotation.y += simDt * 0.09;
         clouds.rotation.y += simDt * 0.106;
       }
+      if (naturalCloudSpinExtra > 0) clouds.rotation.y += simDt * naturalCloudSpinExtra;
 
       earthLayerBlend.current = THREE.MathUtils.lerp(earthLayerBlend.current, earthLayerBlend.target, 0.08);
       earthLayers.forEach((layer) => {
@@ -1210,14 +1964,14 @@
       issDot.position.set(Math.cos(issAngle)*ISS_R, 0, Math.sin(issAngle)*ISS_R);
 
       // Aurora shimmer
-      if (state.aurora) {
+      if (state.aurora || naturalAuroraForce) {
         auroraGroup.children.forEach((l,i) => {
           l.material.opacity = 0.3 + Math.sin(t*2.1 + i*0.8)*0.35;
         });
       }
 
       // Atmosphere breathe
-      atmMat.uniforms.uMult.value = 1.4 + Math.sin(t*0.5)*0.12;
+      atmMat.uniforms.uMult.value = 1.4 + Math.sin(t*0.5)*0.12 + naturalAtmospherePulse;
 
       // Stars slow drift
       starGroup.rotation.y += simDt * 0.0006;
