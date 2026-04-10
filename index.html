@@ -86,12 +86,17 @@
        RENDERER
     ───────────────────────────────────────── */
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    const desktopPixelRatio = Math.min(devicePixelRatio, 2);
+    const vrPixelRatio = Math.min(desktopPixelRatio, 1.1);
+    renderer.setPixelRatio(desktopPixelRatio);
     renderer.setSize(innerWidth, innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
+    renderer.toneMappingExposure = 0.98;
     renderer.xr.enabled = true;
+    if (renderer.xr.setFramebufferScaleFactor) {
+      renderer.xr.setFramebufferScaleFactor(0.85);
+    }
     document.body.prepend(renderer.domElement);
     document.body.appendChild(VRButton.createButton(renderer, {
       optionalFeatures: ['local-floor', 'dom-overlay'],
@@ -117,18 +122,22 @@
     /* ─────────────────────────────────────────
        LIGHTING  — simulates distant Sun
     ───────────────────────────────────────── */
-    // Nguồn sáng mặt trời: toả sáng ra toàn hệ.
-    const sunLight = new THREE.PointLight(0xfff4d6, 9000, 1200, 2);
+    // Sun lighting leans physically-plausible: hot core, long reach, very little ambient fill.
+    const sunLight = new THREE.PointLight(0xffefc8, 6200, 1400, 2.05);
     sunLight.position.set(0, 0, 0);
     scene.add(sunLight);
 
-    // Ambient: deep space scatter — keep it low for dark-side drama
-    const ambLight = new THREE.AmbientLight(0x0a1220, 0.35);
+    const sunCoreLight = new THREE.PointLight(0xfff7de, 520, 170, 2.45);
+    sunCoreLight.position.set(0, 0, 0);
+    scene.add(sunCoreLight);
+
+    // Ambient: deep space scatter — keep it restrained so the night side stays dramatic.
+    const ambLight = new THREE.AmbientLight(0x07101b, 0.16);
     scene.add(ambLight);
 
-    // Subtle blue-side fill (reflected moonlight / earthshine)
-    const fillLight = new THREE.DirectionalLight(0x1b2f4a, 0.12);
-    fillLight.position.set(-7, -2, -5);
+    // Earthshine / sensor fill: just enough to keep silhouettes readable.
+    const fillLight = new THREE.DirectionalLight(0x1b324d, 0.08);
+    fillLight.position.set(-10, -3, -8);
     scene.add(fillLight);
 
     const R = 2; // Earth radius (scene units)
@@ -147,6 +156,79 @@
     const BASE = 'https://threejs.org/examples/textures/planets/';
     const IMG = './Img/';
     const clickableBodies = [];
+    const sunCoronaShells = [];
+    let sunSurfaceUniforms;
+    let sunGlowSprite;
+    let sunOuterHaloSprite;
+
+    function createSolarHaloTexture(stops) {
+      const haloCanvas = document.createElement('canvas');
+      haloCanvas.width = 512;
+      haloCanvas.height = 512;
+      const ctx = haloCanvas.getContext('2d');
+      const gradient = ctx.createRadialGradient(256, 256, 6, 256, 256, 256);
+
+      stops.forEach(([offset, color]) => gradient.addColorStop(offset, color));
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 512, 512);
+
+      const haloTexture = new THREE.CanvasTexture(haloCanvas);
+      haloTexture.colorSpace = THREE.SRGBColorSpace;
+      return haloTexture;
+    }
+
+    function createCoronaMaterial(colorHex, opacity, power, speed, scale) {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uColor: { value: new THREE.Color(colorHex) },
+          uOpacity: { value: opacity },
+          uPower: { value: power },
+          uScale: { value: scale },
+          uSpeed: { value: speed },
+        },
+        vertexShader: `
+          varying vec3 vNormal;
+          varying vec3 vViewDir;
+          varying vec2 vUv;
+
+          void main() {
+            vUv = uv;
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            vNormal = normalize(normalMatrix * normal);
+            vViewDir = normalize(-mvPosition.xyz);
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `,
+        fragmentShader: `
+          uniform float uTime;
+          uniform vec3 uColor;
+          uniform float uOpacity;
+          uniform float uPower;
+          uniform float uScale;
+          uniform float uSpeed;
+
+          varying vec3 vNormal;
+          varying vec3 vViewDir;
+          varying vec2 vUv;
+
+          void main() {
+            float facing = abs(dot(normalize(vNormal), normalize(vViewDir)));
+            float fresnel = pow(1.0 - clamp(facing, 0.0, 1.0), uPower);
+            float waveA = sin(vUv.y * 28.0 * uScale + uTime * uSpeed);
+            float waveB = sin(vUv.x * 19.0 * uScale - uTime * (uSpeed * 0.63));
+            float turbulence = sin((vUv.x + vUv.y) * 34.0 * uScale + uTime * (uSpeed * 1.21));
+            float breakup = 0.9 + waveA * 0.08 + waveB * 0.07 + turbulence * 0.05;
+            float alpha = fresnel * breakup * uOpacity;
+            gl_FragColor = vec4(uColor * (0.7 + fresnel * 0.85), alpha);
+          }
+        `,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      });
+    }
 
     /* ── Earth surface ── */
     const earthMat = new THREE.MeshPhongMaterial({
@@ -212,19 +294,66 @@
     ───────────────────────────────────────── */
     let sunMesh;
     tl.load(IMG + 'sun.jpg', (texture) => {
-      // Texture Mặt Trời thường cần màu sắc rực rỡ và phát sáng
       texture.colorSpace = THREE.SRGBColorSpace;
-
-      // Tạo hình cầu cho Mặt Trời
-      // Kích thước của Mặt Trời thực tế là khổng lồ so với Trái Đất.
-      // Tuy nhiên, để có thể nhìn thấy cả hai cùng lúc, chúng ta sử dụng một tỉ lệ không thực tế,
-      // đặt Mặt Trời ở gần và có kích thước dễ nhìn.
       const sunGeometry = new THREE.SphereGeometry(R * 5.4, 96, 96);
+      sunSurfaceUniforms = {
+        uMap: { value: texture },
+        uTime: { value: 0 },
+        uDeep: { value: new THREE.Color(0xff7b1f) },
+        uMid: { value: new THREE.Color(0xffb347) },
+        uHot: { value: new THREE.Color(0xffd58a) },
+      };
 
-      // Vì Mặt Trời tự phát sáng, chúng ta sử dụng BasicMaterial thay vì Phong hay Standard để nó không bị ảnh hưởng bởi bóng tối.
-      const sunMaterial = new THREE.MeshBasicMaterial({
-        map: texture,
-        color: 0xfff7de,
+      const sunMaterial = new THREE.ShaderMaterial({
+        uniforms: sunSurfaceUniforms,
+        vertexShader: `
+          varying vec2 vUv;
+          varying vec3 vNormal;
+          varying vec3 vViewDir;
+
+          void main() {
+            vUv = uv;
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            vNormal = normalize(normalMatrix * normal);
+            vViewDir = normalize(-mvPosition.xyz);
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D uMap;
+          uniform float uTime;
+          uniform vec3 uDeep;
+          uniform vec3 uMid;
+          uniform vec3 uHot;
+
+          varying vec2 vUv;
+          varying vec3 vNormal;
+          varying vec3 vViewDir;
+
+          float sampleLuma(vec3 c) {
+            return dot(c, vec3(0.299, 0.587, 0.114));
+          }
+
+          void main() {
+            vec2 driftA = vec2(uTime * 0.0016, -uTime * 0.00115);
+            vec2 driftB = vec2(-uTime * 0.0011, uTime * 0.00145);
+            vec3 texA = texture2D(uMap, vUv + driftA).rgb;
+            vec3 texB = texture2D(uMap, vUv * 1.73 + driftB).rgb;
+            float mapA = sampleLuma(texA);
+            float mapB = sampleLuma(texB);
+            float facing = clamp(dot(normalize(vNormal), normalize(vViewDir)), 0.0, 1.0);
+            float limb = pow(1.0 - facing, 2.2);
+            float centerHot = pow(facing, 1.72);
+            float plasmaBands = sin(vUv.y * 82.0 + uTime * 1.25) * sin(vUv.x * 63.0 - uTime * 0.78);
+            float granulation = (mapB - 0.5) * 0.34 + plasmaBands * 0.045;
+            vec3 color = mix(uDeep, uMid, smoothstep(0.18, 0.92, mapA + granulation));
+            color = mix(color, uHot, centerHot * 0.38 + mapA * 0.1);
+            color += uMid * max(granulation, -0.04) * 0.35;
+            color += uHot * limb * 0.14;
+            float intensity = 0.62 + centerHot * 0.16 + mapA * 0.09 + limb * 0.07;
+            gl_FragColor = vec4(color * intensity, 1.0);
+          }
+        `,
         toneMapped: false,
       });
 
@@ -234,61 +363,64 @@
       scene.add(sunMesh);
       clickableBodies.push(sunMesh);
 
-      // Corona layer 1: viền nóng sát bề mặt
       const sunCoronaA = new THREE.Mesh(
-        new THREE.SphereGeometry(R * 6.05, 64, 64),
-        new THREE.MeshBasicMaterial({
-          color: 0xffb45e,
-          transparent: true,
-          opacity: 0.09,
-          blending: THREE.AdditiveBlending,
-          side: THREE.BackSide,
-          depthWrite: false,
-        })
+        new THREE.SphereGeometry(R * 5.95, 96, 96),
+        createCoronaMaterial(0xffb15a, 0.075, 3.4, 1.2, 1.0)
       );
+      sunCoronaA.scale.set(1.0, 1.01, 1.0);
       sunMesh.add(sunCoronaA);
+      sunCoronaShells.push(sunCoronaA);
 
-      // Corona layer 2: viền rộng, mềm hơn
       const sunCoronaB = new THREE.Mesh(
-        new THREE.SphereGeometry(R * 7.6, 64, 64),
-        new THREE.MeshBasicMaterial({
-          color: 0xffd28a,
-          transparent: true,
-          opacity: 0.06,
-          blending: THREE.AdditiveBlending,
-          side: THREE.BackSide,
-          depthWrite: false,
-        })
+        new THREE.SphereGeometry(R * 6.9, 96, 96),
+        createCoronaMaterial(0xffd9a6, 0.038, 2.6, 0.85, 0.72)
       );
       sunMesh.add(sunCoronaB);
+      sunCoronaShells.push(sunCoronaB);
 
-      // Glow billboard để viền phát sáng giống ảnh quan sát thiên văn
-      const glowCanvas = document.createElement('canvas');
-      glowCanvas.width = 256;
-      glowCanvas.height = 256;
-      const gctx = glowCanvas.getContext('2d');
-      const grad = gctx.createRadialGradient(128, 128, 10, 128, 128, 128);
-      grad.addColorStop(0.0, 'rgba(255,235,170,0.95)');
-      grad.addColorStop(0.35, 'rgba(255,190,100,0.55)');
-      grad.addColorStop(0.75, 'rgba(255,150,70,0.16)');
-      grad.addColorStop(1.0, 'rgba(255,130,40,0.0)');
-      gctx.fillStyle = grad;
-      gctx.fillRect(0, 0, 256, 256);
-
-      const glowTex = new THREE.CanvasTexture(glowCanvas);
-      const sunGlow = new THREE.Sprite(
+      const innerHaloTex = createSolarHaloTexture([
+        [0.0, 'rgba(255,246,220,0.74)'],
+        [0.08, 'rgba(255,226,168,0.52)'],
+        [0.24, 'rgba(255,199,108,0.62)'],
+        [0.58, 'rgba(255,154,68,0.16)'],
+        [1.0, 'rgba(255,118,28,0.0)'],
+      ]);
+      sunGlowSprite = new THREE.Sprite(
         new THREE.SpriteMaterial({
-          map: glowTex,
+          map: innerHaloTex,
           color: 0xffffff,
           transparent: true,
-          opacity: 0.42,
+          opacity: 0.11,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
           depthTest: false,
+          toneMapped: false,
         })
       );
-      sunGlow.scale.set(R * 25, R * 25, 1);
-      sunMesh.add(sunGlow);
+      sunGlowSprite.scale.set(R * 19, R * 19, 1);
+      sunMesh.add(sunGlowSprite);
+
+      const outerHaloTex = createSolarHaloTexture([
+        [0.0, 'rgba(255,244,214,0.42)'],
+        [0.16, 'rgba(255,214,145,0.18)'],
+        [0.42, 'rgba(255,176,95,0.09)'],
+        [1.0, 'rgba(255,128,36,0.0)'],
+      ]);
+      sunOuterHaloSprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: outerHaloTex,
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.075,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          depthTest: false,
+          toneMapped: false,
+        })
+      );
+      sunOuterHaloSprite.scale.set(R * 25, R * 25, 1);
+      sunMesh.add(sunOuterHaloSprite);
+
       onLoad();
     });
 
@@ -1118,6 +1250,8 @@
     });
 
     renderer.xr.addEventListener('sessionstart', () => {
+      renderer.setPixelRatio(vrPixelRatio);
+
       if (state.layers) {
         state.layers = false;
         const layersBtn = document.getElementById('t-layers');
@@ -1136,6 +1270,12 @@
       vrGazeState.currentObject = null;
       vrGazeState.dwellTime = 0;
       vrGazeState.cooldown = 0;
+      vrGazeRayTimer = 0;
+      vrGazeHits = [];
+    });
+
+    renderer.xr.addEventListener('sessionend', () => {
+      renderer.setPixelRatio(desktopPixelRatio);
     });
 
     const raycaster = new THREE.Raycaster();
@@ -1149,6 +1289,17 @@
       dwellThreshold: 1.15,
       cooldown: 0,
     };
+    let vrGazeRayTimer = 0;
+    let vrGazeHits = [];
+
+    function getRenderableRayTargets(includeVrPanels = false) {
+      const targets = clickableBodies.filter(isRenderable);
+      if (includeVrPanels) {
+        if (state.vrTelemetry && telemetry3DMesh.visible) targets.push(telemetry3DMesh);
+        if (state.vrControls && state.uiPanel && controls3DMesh.visible) targets.push(controls3DMesh);
+      }
+      return targets;
+    }
 
     const vrTmpMatrix = new THREE.Matrix4();
     const vrRayOrigin = new THREE.Vector3();
@@ -1236,9 +1387,7 @@
 
       raycaster.ray.origin.copy(vrRayOrigin);
       raycaster.ray.direction.copy(vrRayDirection);
-      const rayTargets = clickableBodies.filter(isRenderable);
-      if (state.vrTelemetry && telemetry3DMesh.visible) rayTargets.push(telemetry3DMesh);
-      if (state.vrControls && state.uiPanel && controls3DMesh.visible) rayTargets.push(controls3DMesh);
+      const rayTargets = getRenderableRayTargets(true);
       ctrl.hits = raycaster.intersectObjects(rayTargets, false);
 
       if (ctrl.hits.length) {
@@ -1361,14 +1510,33 @@
     }
 
     renderer.domElement.addEventListener('click', (ev) => {
-      if (renderer.xr.isPresenting) return;
-
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
 
-      const hits = raycaster.intersectObjects(clickableBodies.filter(isRenderable), false);
+      const rayTargets = clickableBodies.filter(isRenderable);
+      if (renderer.xr.isPresenting) {
+        if (state.vrTelemetry && telemetry3DMesh.visible) rayTargets.push(telemetry3DMesh);
+        if (state.vrControls && state.uiPanel && controls3DMesh.visible) rayTargets.push(controls3DMesh);
+      }
+
+      const hits = raycaster.intersectObjects(rayTargets, false);
+      if (!hits.length) {
+        hideInfoPopup();
+        return;
+      }
+
+      const firstHit = hits[0];
+      if (firstHit.object === telemetry3DMesh) {
+        handleTelemetry3DPointerSelect(firstHit);
+        return;
+      }
+      if (firstHit.object === controls3DMesh) {
+        handleControls3DPointerSelect(firstHit);
+        return;
+      }
+
       applyPickedObjectFromHits(hits, ev.clientX, ev.clientY);
     });
     refreshFocusLabel();
@@ -1421,6 +1589,7 @@
         duration: [6, 10],
       },
     ];
+    let naturalEventIndex = 0;
 
     function resetNaturalVisuals() {
       naturalCloudSpinExtra = 0;
@@ -1441,7 +1610,9 @@
     }
 
     function beginNaturalEvent() {
-      const def = naturalEventDefs[Math.floor(Math.random() * naturalEventDefs.length)];
+      if (!naturalEventDefs.length) return;
+      const def = naturalEventDefs[naturalEventIndex % naturalEventDefs.length];
+      naturalEventIndex = (naturalEventIndex + 1) % naturalEventDefs.length;
       naturalEvent.id = def.id;
       naturalEvent.elapsed = 0;
       naturalEvent.duration = THREE.MathUtils.randFloat(def.duration[0], def.duration[1]);
@@ -1832,6 +2003,8 @@
     let controls3DTimer = 0;
     drawControls3D();
 
+    let hudTimer = 0;
+
     /* ─────────────────────────────────────────
        ANIMATION LOOP
     ───────────────────────────────────────── */
@@ -1866,8 +2039,13 @@
 
         vrControllers.forEach((c) => updateControllerRay(c, dt));
 
-        raycaster.setFromCamera(vrCenter, camera);
-        const vrHits = raycaster.intersectObjects(clickableBodies.filter(isRenderable), false);
+        vrGazeRayTimer += dt;
+        if (vrGazeRayTimer >= 0.05) {
+          raycaster.setFromCamera(vrCenter, camera);
+          vrGazeHits = raycaster.intersectObjects(getRenderableRayTargets(false), false);
+          vrGazeRayTimer = 0;
+        }
+        const vrHits = vrGazeHits;
         const topHit = vrHits[0] || null;
         const topObj = topHit?.object || null;
 
@@ -1899,6 +2077,8 @@
         vrGazeState.currentObject = null;
         vrGazeState.dwellTime = 0;
         vrGazeState.cooldown = 0;
+        vrGazeRayTimer = 0;
+        vrGazeHits = [];
       }
 
       updateNaturalPhenomena(simDt);
@@ -1923,21 +2103,22 @@
       globe.position.set(earthOrbit.radius, 0, 0);
 
       // Planet system around Earth
-      planetNodes.forEach((p) => {
-        p.orbitAngle += simDt * p.orbitSpeed * 0.55;
-        p.mesh.position.set(
-          Math.cos(p.orbitAngle) * p.orbitRadius,
-          Math.sin(p.orbitAngle * 0.33) * 0.12,
-          Math.sin(p.orbitAngle) * p.orbitRadius
-        );
-        p.mesh.rotation.y += simDt * p.spinSpeed;
-      });
+      if (state.planets) {
+        planetNodes.forEach((p) => {
+          p.orbitAngle += simDt * p.orbitSpeed * 0.55;
+          p.mesh.position.set(
+            Math.cos(p.orbitAngle) * p.orbitRadius,
+            Math.sin(p.orbitAngle * 0.33) * 0.12,
+            Math.sin(p.orbitAngle) * p.orbitRadius
+          );
+          p.mesh.rotation.y += simDt * p.spinSpeed;
+        });
 
-      // Update sun rays to planets
-      sunRays.forEach((r) => {
-        r.line.geometry.setFromPoints([new THREE.Vector3(0, 0, 0), r.target.position.clone()]);
-      });
-      earthRay.geometry.setFromPoints([new THREE.Vector3(0, 0, 0), globe.position.clone()]);
+        // Update sun rays to planets only when visible
+        sunRays.forEach((r) => {
+          r.line.geometry.setFromPoints([new THREE.Vector3(0, 0, 0), r.target.position.clone()]);
+        });
+      }
 
       // Moon orbit around Earth
       moonAngle += simDt * 0.95;
@@ -1950,10 +2131,30 @@
 
       // Sun self-rotation
       if (sunMesh) {
-          // Thêm một chút chuyển động quay cho Mặt Trời để nó chân thực hơn.
-          // Tốc độ quay của Mặt Trời thực tế rất chậm.
-          sunMesh.rotation.y += simDt * 0.005;
-          sunMesh.rotation.x += simDt * 0.002;
+          sunMesh.rotation.y += simDt * 0.0042;
+          sunMesh.rotation.x += simDt * 0.0014;
+      }
+
+      if (sunSurfaceUniforms) {
+        sunSurfaceUniforms.uTime.value = t;
+      }
+
+      sunCoronaShells.forEach((shell, index) => {
+        shell.material.uniforms.uTime.value = t;
+        shell.rotation.y += simDt * (0.006 + index * 0.0015);
+        shell.rotation.z -= simDt * (0.0024 + index * 0.001);
+      });
+
+      if (sunGlowSprite) {
+        const glowPulse = 1 + Math.sin(t * 0.82) * 0.022;
+        sunGlowSprite.material.opacity = 0.1 + Math.sin(t * 0.66) * 0.006;
+        sunGlowSprite.scale.set(R * 19 * glowPulse, R * 19 * glowPulse, 1);
+      }
+
+      if (sunOuterHaloSprite) {
+        const haloPulse = 1 + Math.sin(t * 0.48 + 1.1) * 0.018;
+        sunOuterHaloSprite.material.opacity = 0.068 + Math.sin(t * 0.41) * 0.006;
+        sunOuterHaloSprite.scale.set(R * 25 * haloPulse, R * 25 * haloPulse, 1);
       }
 
       // Grid tracks Earth rotation
@@ -1979,14 +2180,18 @@
 
       // HUD
       const focused = activeFocus();
-      const focusObj = focused.get() || earth;
-      focusObj.getWorldPosition(earthWorld);
-      const dist = camera.position.distanceTo(earthWorld);
-      vDist.textContent = Math.round(Math.max(0, (dist - focused.radius) * 3185)).toLocaleString() + ' km';
-      vLon.textContent  = (((-earth.rotation.y * 180/Math.PI) % 360 + 360) % 360).toFixed(1) + '°';
-      vIss.textContent  = (issAngle % (Math.PI*2) / (Math.PI*2) * 100).toFixed(1) + '%';
-      if (vBody) vBody.textContent = focused.name;
-      telemetry.update(focused.name);
+      hudTimer += dt;
+      if (hudTimer >= 0.1) {
+        const focusObj = focused.get() || earth;
+        focusObj.getWorldPosition(earthWorld);
+        const dist = camera.position.distanceTo(earthWorld);
+        vDist.textContent = Math.round(Math.max(0, (dist - focused.radius) * 3185)).toLocaleString() + ' km';
+        vLon.textContent  = (((-earth.rotation.y * 180/Math.PI) % 360 + 360) % 360).toFixed(1) + '°';
+        vIss.textContent  = (issAngle % (Math.PI*2) / (Math.PI*2) * 100).toFixed(1) + '%';
+        if (vBody) vBody.textContent = focused.name;
+        telemetry.update(focused.name);
+        hudTimer = 0;
+      }
 
       if (followSelected) {
         const body = focused;
@@ -2026,7 +2231,7 @@
     window.addEventListener('resize', () => {
       camera.aspect = innerWidth / innerHeight;
       camera.updateProjectionMatrix();
-      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setPixelRatio(renderer.xr.isPresenting ? vrPixelRatio : desktopPixelRatio);
       renderer.setSize(innerWidth, innerHeight);
     });
   </script>

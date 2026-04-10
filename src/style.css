@@ -12,7 +12,9 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-	background: #000;
+	background:
+		radial-gradient(circle at 50% 44%, rgba(255, 181, 86, 0.08) 0%, rgba(255, 126, 34, 0.03) 12%, rgba(0, 0, 0, 0) 32%),
+		radial-gradient(circle at 50% 50%, rgba(8, 16, 28, 0.15) 0%, rgba(0, 0, 0, 0.92) 78%);
 	overflow: hidden;
 	font-family: 'Rajdhani', sans-serif;
 	color: var(--white);
@@ -20,6 +22,18 @@ body {
 }
 
 canvas { display: block; }
+
+body::before {
+	content: '';
+	position: fixed;
+	inset: 0;
+	z-index: 1;
+	pointer-events: none;
+	background:
+		radial-gradient(circle at 50% 45%, rgba(255, 210, 142, 0.06) 0%, rgba(255, 156, 66, 0.03) 14%, rgba(0, 0, 0, 0) 28%),
+		radial-gradient(circle at 50% 52%, rgba(0, 0, 0, 0) 52%, rgba(0, 0, 0, 0.28) 100%);
+	opacity: 0.9;
+}
 
 /* Loading screen */
 #loader {
